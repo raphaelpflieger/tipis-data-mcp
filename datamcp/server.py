@@ -37,7 +37,7 @@ logger = logging.getLogger("datamcp")
 # characters): the rules that matter live in the tool descriptions and outputs, this is the routing.
 INSTRUCTIONS = (
     "Read-only analytics of La Carte des Colocs (pseudonymous records; publish aggregates only). "
-    "Cities today: top_cities, city_figures; a city's history: rent_trend; area pages' audience: "
+    "Cities today: top_cities, city_figures; a city's rents by month: rent_trend; area pages' audience: "
     "traffic_series; partner feeds: feed_volumes. Otherwise list_datasets, describe_dataset, then one "
     "aggregated SELECT with query. Answer in the user's language (French by default); cite the dataset, "
     "the 'as of' date and the sample size of every figure."

@@ -14,7 +14,7 @@ def rapport_ville(ville: str) -> str:
 
 Étapes :
 1. Appelle `city_figures` avec « {ville} » : ce sont les chiffres affichés sur la page ville du site, ils font foi.
-2. Complète avec `rent_trend` (évolution) et, si utile, `query` sur `analytics.monthly_city_listings` (annonces en ligne par mois) et `analytics.viewport_plausible_daily_stats` (audience de la page).
+2. Complète avec `rent_trend` (loyer médian et annonces en ligne mois par mois, avec leurs échantillons) et, si utile, `traffic_series` (audience de la page).
 3. Rédige : un paragraphe d'introduction, un tableau des chiffres clés (avec la date « au » et le nombre d'annonces qui fondent la médiane), 2 à 3 constats sourcés, une phrase de méthodologie.
 4. Ne cite jamais une annonce, un membre ou une adresse : uniquement des agrégats.
 
@@ -27,6 +27,7 @@ def barometre_loyers(zone: str = "France") -> str:
 
 Données :
 - `top_cities` (metric=median_rent_per_m2) pour le classement des villes : la médiane affichée sur la page ville, sa date de calcul et le nombre de loyers derrière chaque médiane ;
+- `rent_trend` pour l'évolution mois par mois d'une ville (médiane des annonces créées chaque mois, avec son échantillon) ;
 - `query` pour une médiane par type de logement ou par département si besoin, avec la méthode du site : loyer de chaque chambre (`analytics.rooms`) divisé par sa surface (≥ 5 m²), annonces organiques (`from_xml_feed = false`, non blacklistées, loyer mensuel) créées sur les 365 derniers jours, `percentile_cont(0.5)`, et au moins 30 loyers par groupe.
 
 Format : un tableau trié, une lecture en 3 points, les limites (échantillon, loyers déclarés charges comprises, annonces créées sur un an et pas seulement en ligne), puis la ligne de méthodologie :

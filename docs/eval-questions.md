@@ -15,9 +15,9 @@ Scoring per question: **calls** (tool calls before the answer), **errors** (fail
 | 1 | Liste les 15 villes avec le plus d'annonces en ligne actuellement. | `top_cities(limit=15)` — 1 call | Paris 466, Lyon 410, Toulouse 388, Marseille 354, Bordeaux 316, Rennes 260, Nantes 248, Grenoble 242, Montpellier 195, Villeurbanne 186, Strasbourg 174, Lille 145, Angers 121, Saint-Étienne 110, Mérignac 106 (nightly count of 2026-10-09) | before the fix the default call failed (duplicate column) |
 | 2 | Combien d'annonces sont en ligne en France aujourd'hui, et quelle part vient des flux partenaires ? | `query` on `listings` with the online rule — 1–3 calls | 11,357 online (search rule), 3,416 from feeds = 30 %; France page count 11,162 (2026-10-09) | adding `desactivated_at IS NULL` drops 123 live listings |
 | 3 | Inscriptions par mois depuis janvier 2024. | `query` on `monthly_event_counts`, action `USER_CREATED` — 1–2 calls | 2024-01 7,624 · 2024-07 15,928 · 2025-07 17,767 · 2026-08 19,835 · 2026-09 13,694 · 2026-10 partial | `users.created_at` is 7–9 % lower (deleted accounts); October is partial |
-| 4 | Fais-moi un tableau de bord de l'activité des 24 derniers mois, en artifact : inscriptions, annonces créées, conversations, messages. | one `query` on `monthly_event_counts` (4 actions, pivot) | 2026-09: 13,694 sign-ups · 6,126 listings created · 261,434 conversations · 478,151 messages | sum over `canonical_domain`; flag the partial month |
+| 4 | Fais-moi un tableau de bord de l'activité des 24 derniers mois, en artifact : inscriptions, annonces créées, conversations, messages. | one `query` on `monthly_event_counts` (4 actions, pivot) | 2026-09: 13,694 sign-ups · 6,126 listings created · 261,434 conversations · 478,151 messages | sum over `canonical_domain`; flag the partial month; listings created = `LISTING_CREATED`, not `monthly_new_listings` (about 3 in 10 survive) |
 | 5 | Montre l'historique depuis 2013 des inscriptions et des annonces créées, en échelle logarithmique. | one `query` on `monthly_event_counts` | USER_CREATED from 2013-07-04; LISTING_CREATED only from 2015-08-31 | must say the listing series starts in 2015, not draw zeros |
-| 6 | Quel est le loyer médian au m² à Paris, Lyon, Bordeaux, Toulouse et Lille, et comment a-t-il évolué sur 24 mois ? | `city_figures` / `top_cities(metric=median_rent_per_m2)` for today; `rent_trend` for the history | Paris 57.66 € (2,610 rents) · Lyon 42.86 € (1,897) · Bordeaux 50.34 € (1,298) · Toulouse 39.66 € (1,864) · Lille 41.15 € (540) | snapshots start 2026-09-28; the median is a rolling 365-day figure recomputed monthly — a flat line is not "stable rents"; recomputing gives Lyon 42.76 € (1,954) ≠ the site's 42.86 € |
+| 6 | Quel est le loyer médian au m² à Paris, Lyon, Bordeaux, Toulouse et Lille, et comment a-t-il évolué sur 24 mois ? | `top_cities(metric=median_rent_per_m2)` (or `city_figures` ×5) for today + `rent_trend(city, 24)` ×5 for the history | Paris 57.66 € (2,610 rents) · Lyon 42.86 € (1,897) · Bordeaux 50.34 € (1,298) · Toulouse 39.66 € (1,864) · Lille 41.15 € (540) | quote the page's 365-day figure for today, the monthly medians only with their samples (Lyon 2025-09: 25 rents, no median; 2026-06: 42.31 € on 289); older months shrink (deleted listings vanish); recomputing the 365-day figure gives Lyon 42.76 € (1,954) ≠ the site's 42.86 € |
 | 7 | CA mensuel HT des 12 derniers mois, par type (options, abonnements, dons). | one `query` on `monthly_revenue` | 2025-10 8,176.04 € … 2026-06 33,411.80 € · 2026-09 22,853.54 € · 2026-10 partial | gross (refunds not deducted); `lower(payment_status)` if built from `transactions` |
 | 8 | Quelles requêtes Google ont apporté le plus de clics en septembre 2026 ? Top 10. | one `query` on `search_console_queries` | « la carte des colocs » 54,612 clics · « carte des colocs » 16,554 · « lacartedescolocs » 6,888 · … · « colocation paris » 1,626 (CTR 16.6 %) | queries carry no page (« sur nos guides » cannot be filtered) |
 | 9 | Volumes des flux partenaires sur les 6 derniers mois. | `feed_volumes(months=6)` — 1 call | 2026-09: website/lacartedescolocs 138 published, locservice 619 published | current month partial |
@@ -27,9 +27,19 @@ Scoring per question: **calls** (tool calls before the answer), **errors** (fail
 
 ## Results
 
-| # | Before (claude.ai, audit log) | After |
+Before = Raphaël's first claude.ai tests, audit log of 2026-10-10 17:34–18:17 UTC (the questions
+themselves are not logged; the paths are). Calls from 18:56 on are the audit session itself.
+
+| # | Before (claude.ai, audit log 2026-10-10) | After |
 |---|---|---|
-| 1–12 | to fill from Raphaël's first tests (audit log of 2026-10-10) | to fill after the deploy |
+| 5 (history since 2013) | 15 calls, 0 errors: list_datasets → describe monthly_event_counts → 4 queries → describe daily_event_counts → 4 queries probing where each series starts and its spikes → `data://dictionary` read once, mid-way → 1 more probe → describe + 1 query on monthly_new_listings. Sums over domains done right. ~5 calls were the model rediscovering series start dates; the organic / imported split per year came from `monthly_new_listings`, i.e. surviving listings only (2024: 25,409 rows vs 94,432 created) | |
+| 1 (city ranking) | 3 calls, 0 errors: describe city_figures → query top 25 → a count query. `top_cities` never called (the broken default was not hit by luck) | |
+| — (sign-ups today, Paris time) | 8 calls, 0 errors: list_datasets → describe users + events → 5 queries, two on raw `events` with a narrow `enqueued_at` range (33–130 ms) | |
+| 2–4, 6–12 | not asked yet | |
+| audit session (Claude Code, 18:58–19:13) | `top_cities` default failed (duplicate column); 1 ambiguous-column error of my own | |
+
+Reading: list_datasets opened both sessions (the rules now ride on it); the dictionary was read once,
+after nine queries; the city question went to raw SQL rather than the dedicated tool.
 
 ## What each product shows the model (checked 2026-10-10)
 

@@ -34,6 +34,7 @@ async def test_list_and_describe_and_query(served: Served):
 
         listing = text_of(await c.call_tool("list_datasets", {"database": "primary"}))
         assert "**things**" in listing and "Things: one row per thing" in listing
+        assert "## Domain rules" in listing and "auto_validated" in listing  # the model's only copy in claude.ai
 
         described = text_of(await c.call_tool("describe_dataset", {"database": "primary", "dataset": "things", "include_values": True}))
         assert "| kind | text | flatshare, rental or sublet |" in described
@@ -257,8 +258,8 @@ async def test_kill_switch(prepared_db, tmp_path, secrets_dir):
             assert "disabled" in str(raised.value)
 
 
-# the two city views as tipis-web builds them, with three cities over two days
-CITY_SQL = """
+# the city views as tipis-web builds them, with three cities over two days, plus Lyon's rents for rent_trend
+CITY_WORLD_SQL = """
 DROP TABLE IF EXISTS public.city_snapshots CASCADE;
 CREATE TABLE public.city_snapshots (
   canonical_path text, area_name text, country_code text, currency_code text, computed_on date,
@@ -274,6 +275,27 @@ FROM (VALUES ('/fr/auvergne-rhone-alpes/lyon', 'Lyon', 410, 42.86, 1897),
              ('/fr/nouvelle-aquitaine/bordeaux', 'Bordeaux', 316, 50.34, 1298)) AS c(path, name, listings, rent, samples),
      (VALUES (DATE '2026-10-09'), (DATE '2026-10-10')) AS d(day);
 CREATE VIEW analytics.city_figures_snapshots AS SELECT * FROM public.city_snapshots;
+DROP TABLE IF EXISTS public.areas, public.ads, public.ad_rooms, public.area_months CASCADE;
+CREATE TABLE public.areas (canonical_path text, city jsonb, data_type text, historical boolean, online_listings_count integer);
+INSERT INTO public.areas VALUES ('/fr/auvergne-rhone-alpes/lyon', '{"fr": "Lyon"}', 'city', false, 410),
+                                ('/fr/auvergne-rhone-alpes/lyon/1er-arrondissement', '{"fr": "Lyon"}', 'district', false, 500);
+CREATE TABLE public.ads (id integer, utm_geotag text, blacklisted boolean, from_xml_feed boolean, total_rooms_count integer,
+                         listing_type text, cost_total_rent integer, lodging_surface double precision,
+                         cost_periodicity text, created_at timestamp);
+-- 40 organic rooms at 40 €/m² this month, 10 at 50 €/m² last month (too few), 5 feed rooms at 90 €/m² (ignored)
+INSERT INTO public.ads
+SELECT g, 'fr_auvergne-rhone-alpes_lyon', false, g > 50, 1, 'flatshare', 0, 0, NULL,
+       CASE WHEN g <= 40 OR g > 50 THEN date_trunc('month', now()) + interval '1 hour'
+            ELSE date_trunc('month', now()) - interval '1 day' END
+FROM generate_series(1, 55) g;
+CREATE TABLE public.ad_rooms (listing_id integer, cost_total_rent integer, surface double precision, cost_periodicity text);
+INSERT INTO public.ad_rooms SELECT id, CASE WHEN id <= 40 THEN 400 WHEN id <= 50 THEN 500 ELSE 900 END, 10, 'month' FROM public.ads;
+CREATE TABLE public.area_months (canonical_path text, month date, avg_online_listings integer);
+INSERT INTO public.area_months VALUES ('/fr/auvergne-rhone-alpes/lyon', (date_trunc('month', now()) - interval '1 month')::date, 400);
+CREATE VIEW analytics.viewports AS SELECT * FROM public.areas;
+CREATE VIEW analytics.listings AS SELECT * FROM public.ads;
+CREATE VIEW analytics.rooms AS SELECT * FROM public.ad_rooms;
+CREATE VIEW analytics.monthly_city_listings AS SELECT * FROM public.area_months;
 CREATE VIEW analytics.city_figures AS SELECT s.* FROM analytics.city_figures_snapshots s
   WHERE s.computed_on = (SELECT max(computed_on) FROM analytics.city_figures_snapshots);
 GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO tipis_analytics;
@@ -281,7 +303,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO tipis_analytics;
 
 
 async def test_city_tools_answer_with_their_defaults(served: Served, prepared_db):
-    with changed_database(prepared_db, CITY_SQL):
+    with changed_database(prepared_db, CITY_WORLD_SQL):
         async with client(served, "alice-token") as c:
             ranked = text_of(await c.call_tool("top_cities", {"limit": 2}))  # the default metric is also a fixed column
             assert ranked.startswith("area_name,canonical_path,online_listings,online_listings_date,computed_on\nParis,")
@@ -290,6 +312,13 @@ async def test_city_tools_answer_with_their_defaults(served: Served, prepared_db
             assert "median_rent_per_m2,median_rent_samples" in rents and "Paris" not in rents  # no median, not ranked
             lyon = text_of(await c.call_tool("city_figures", {"city": "lyon"}))
             assert ",410," in lyon and "2025-10: 421; 2025-11: 540" in lyon and '""month""' not in lyon
+            rents = text_of(await c.call_tool("rent_trend", {"city": "lyon", "months": 2}))
+            lines = rents.splitlines()
+            assert lines[0] == "month,median_rent_per_m2,rent_samples,avg_online_listings"
+            assert lines[1].endswith(",,10,400") and lines[2].endswith(",40.00,40,")  # under 30 rents: no median
+            assert "(/fr/auvergne-rhone-alpes/lyon)" in rents and "42.86 EUR/m² over 1897 rents" in rents
+            with pytest.raises(ToolError, match="no city"):
+                await c.call_tool("rent_trend", {"city": "Atlantis"})
 
 
 async def test_every_tool_is_read_only_titled_and_plain_text(served: Served):

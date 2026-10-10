@@ -31,6 +31,50 @@ TOP_METRIC_BASIS = {"online_listings": "online_listings_date", "online_profiles"
 READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 
 
+# rent_trend: the city row, then the site's median method (Viewports::MedianRents) per creation month
+CITY_SQL = """
+    SELECT canonical_path, city ->> 'fr' AS name
+    FROM analytics.viewports
+    WHERE data_type = 'city' AND NOT historical
+      AND (canonical_path = %(city)s OR canonical_path LIKE %(suffix)s OR lower(city ->> 'fr') = lower(%(city)s))
+    ORDER BY online_listings_count DESC NULLS LAST LIMIT 1
+"""
+RENT_HISTORY_SQL = """
+    WITH months AS (
+        SELECT generate_series(date_trunc('month', CURRENT_DATE) - ((%(months)s - 1) || ' months')::interval,
+                               date_trunc('month', CURRENT_DATE), interval '1 month')::date AS month
+    ), rents AS (
+        SELECT date_trunc('month', l.created_at)::date AS month, r.cost_total_rent::float / r.surface AS rent_per_m2
+        FROM analytics.rooms r JOIN analytics.listings l ON l.id = r.listing_id
+        WHERE l.utm_geotag = %(geotag)s AND NOT l.blacklisted AND NOT l.from_xml_feed AND l.total_rooms_count > 0
+          AND r.cost_total_rent > 0 AND r.surface >= 5
+          AND (r.cost_periodicity IN ('month', 'monthly') OR r.cost_periodicity IS NULL)
+          AND l.created_at >= (SELECT min(month) FROM months)
+        UNION ALL
+        SELECT date_trunc('month', created_at)::date, cost_total_rent::float / lodging_surface
+        FROM analytics.listings
+        WHERE utm_geotag = %(geotag)s AND NOT blacklisted AND NOT from_xml_feed AND total_rooms_count = 0
+          AND listing_type = 'rental' AND cost_total_rent > 0 AND lodging_surface > 0
+          AND (cost_periodicity = 'month' OR cost_periodicity IS NULL)
+          AND created_at >= (SELECT min(month) FROM months)
+    ), medians AS (
+        SELECT month, count(*) AS rent_samples,
+               CASE WHEN count(*) >= 30
+                    THEN round(percentile_cont(0.5) WITHIN GROUP (ORDER BY rent_per_m2)::numeric, 2) END AS median_rent_per_m2
+        FROM rents WHERE rent_per_m2 > 0 GROUP BY month
+    )
+    SELECT m.month, d.median_rent_per_m2, coalesce(d.rent_samples, 0) AS rent_samples, c.avg_online_listings
+    FROM months m
+    LEFT JOIN medians d ON d.month = m.month
+    LEFT JOIN analytics.monthly_city_listings c ON c.canonical_path = %(path)s AND c.month = m.month
+    ORDER BY m.month
+"""
+PUBLISHED_RENT_SQL = """
+    SELECT median_rent_per_m2, median_rent_samples, median_rent_computed_on, currency_code, online_listings, online_listings_date
+    FROM analytics.city_figures WHERE canonical_path = %(path)s AND median_rent_per_m2 IS NOT NULL
+"""
+
+
 class Services:
     def __init__(self, settings: Settings, databases: dict[str, Database], catalog: Catalog, audit: Audit):
         self.settings = settings
@@ -59,9 +103,11 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         description=(
             "Catalogue of the datasets (views) of one or both databases, one line each: 'primary' = the "
             "site's data (members, listings, chats, payments, guides, geography), 'metrics' = the event "
-            "stream and its daily/monthly counts. Call it once before your first SQL, then describe_dataset "
-            "on what you will query. Skip it when a dedicated tool answers: top_cities / city_figures "
-            "(cities today), rent_trend (a city's history), traffic_series (area pages' audience), "
+            "stream and its daily/monthly counts — followed by the domain rules every query must apply "
+            "(what 'online' means, partial months, where each series starts, brands). Call it once before "
+            "your first SQL, then describe_dataset on what you will query. Skip it when a dedicated tool "
+            "answers: top_cities / city_figures "
+            "(cities today), rent_trend (a city's rents by month), traffic_series (area pages' audience), "
             "feed_volumes (partner feeds)."
         ),
     )
@@ -75,6 +121,8 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
                 lines.append(f"- **{dataset.name}**: {_first_sentence(dataset.comment)}")
             lines.append("")
         lines.append("Every dataset is read as analytics.<name> (or just <name>) with the query tool.")
+        # claude.ai gives the model neither the server instructions nor data://dictionary: the rules ride here
+        lines += ["", dictionary.RULES_PATH.read_text(encoding="utf-8")]
         services.audit.log("list_datasets", email=current_email(), database=database)
         return "\n".join(lines)
 
@@ -120,8 +168,9 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
             f"{settings.query_timeout_s} s, {settings.max_rows} rows, {settings.max_result_chars} characters. "
             "Traps: an online listing is published AND NOT blacklisted AND (validated OR auto_validated); "
             "daily_event_counts and monthly_event_counts hold one row per action AND canonical_domain, so "
-            "sum over domains; the current month is partial; compare lower(payment_status). Individual "
-            "rows are for internal analysis only: publish aggregates."
+            "sum over domains; count creations (sign-ups, listings) there too, since deleted rows vanish from "
+            "the tables; the current month is partial; compare lower(payment_status). Individual rows are "
+            "for internal analysis only: publish aggregates."
         ),
     )
     async def query(
@@ -195,36 +244,37 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         return f"{text}\n\n[figures as of their own *_date / *_computed_on; a null median means fewer than 30 rents over 365 days]"
 
     @tool(
-        name="rent_trend", title="Historique des chiffres d'une ville",
+        name="rent_trend", title="Évolution des loyers d'une ville",
         description=(
-            "Day-by-day history of one city's published figures (median rent per m² with its sample size, "
-            "listings and tenant profiles online) from the daily snapshots, which start on 2026-09-28, plus "
-            "the monthly average of listings online over the last 12 complete months. The median is a "
-            "rolling 365-day figure recomputed monthly: a flat line means no recomputation, not stable "
-            "rents. Listings online since 2024 per day: query viewport_daily_stats."
+            "Month-by-month rent history of one city: the median rent per m² of the organic listings "
+            "created each month, computed per room as the site does (no median under 30 rents), with its "
+            "sample size, and the monthly average of listings online (from 2024-03). Ends with the figure "
+            "the city page shows today, a 365-day median recomputed monthly. One month is noisier than "
+            "that 365-day figure: read each median with its sample size, quote the page's figure for today."
         ),
     )
     async def rent_trend(city: Annotated[str, Field(description="City name (Lyon) or path (/fr/auvergne-rhone-alpes/lyon)")],
-                         months: Annotated[int, Field(ge=1, le=60, description="How far back, in months")] = 12) -> str:
-        sql = """
-            SELECT computed_on, area_name, median_rent_per_m2, median_rent_samples, online_listings, online_profiles
-            FROM analytics.city_figures_snapshots
-            WHERE (lower(area_name) = lower(%(city)s) OR canonical_path = %(city)s OR canonical_path LIKE %(suffix)s)
-              AND computed_on >= CURRENT_DATE - (%(months)s || ' months')::interval
-            ORDER BY computed_on
-        """
-        params = {"city": city.strip(), "suffix": f"%/{_slug(city)}", "months": int(months)}
-        result = await _fetch(services, "primary", sql, params)
-        trend = await _fetch(services, "primary",
-                             "SELECT trend FROM analytics.city_figures WHERE lower(area_name) = lower(%(city)s) "
-                             "OR canonical_path = %(city)s OR canonical_path LIKE %(suffix)s LIMIT 1",
-                             {"city": city.strip(), "suffix": f"%/{_slug(city)}"})
+                         months: Annotated[int, Field(ge=1, le=60, description="How many months back, the current one included")] = 24) -> str:
+        found = await _fetch(services, "primary", CITY_SQL, {"city": city.strip(), "suffix": f"%/{_slug(city)}"})
+        if not found.rows:
+            raise ToolError(f"no city {city!r}: give its name as the site writes it (Lyon) or its path "
+                            "(/fr/auvergne-rhone-alpes/lyon)")
+        path, name = found.rows[0]
+        # listings.utm_geotag is the city's path with '/' -> '_' (Viewports::MedianRents)
+        params = {"path": path, "geotag": path.strip("/").replace("/", "_"), "months": int(months)}
+        result = await _fetch(services, "primary", RENT_HISTORY_SQL, params)
+        today = await _fetch(services, "primary", PUBLISHED_RENT_SQL, {"path": path})
         text, _ = result.csv(settings.max_result_chars)
-        trend_text = _compact_trend(trend.rows[0][0]) if trend.rows else None
         services.audit.log("rent_trend", email=current_email(), city=city, months=months)
-        first = f" from {result.rows[0][0]}" if result.rows else ""
-        return (f"{text}\n\n12-month trend of listings online (monthly averages): {trend_text}\n"
-                f"[{len(result.rows)} daily snapshots{first}; the snapshots start on 2026-09-28]")
+        notes = [f"{name} ({path}): median rent per m² of the organic listings created that month, per room as "
+                 "the site computes it, null under 30 rents; avg_online_listings = monthly average of the nightly "
+                 "count (from 2024-03); the current month is partial; older months keep only the listings still "
+                 "stored (deleted ones vanish), so their samples shrink"]
+        if today.rows:
+            median, samples, computed_on, currency, online, online_date = today.rows[0]
+            notes.append(f"the city page shows today {median} {currency}/m² over {samples} rents created in the 365 "
+                         f"days before {computed_on}, and {online} listings online on {online_date}")
+        return f"{text}\n\n[{'; '.join(notes)}]"
 
     @tool(
         name="top_cities", title="Classement des villes",
