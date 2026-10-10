@@ -341,6 +341,28 @@ def test_first_sentence_keeps_abbreviations():
     assert _first_sentence("Accommodation ads. Online = published") == "Accommodation ads"
 
 
+async def test_the_rate_limit_survives_the_wall_clock_stepping_back(monkeypatch):
+    import time
+
+    from datamcp.server import MonotonicTokenBucket
+
+    bucket = MonotonicTokenBucket(capacity=2, refill_rate=1.0)
+    monkeypatch.setattr(time, "time", lambda: 0.0)  # the wall clock jumps back to 1970
+    assert await bucket.consume() and await bucket.consume()
+    assert not await bucket.consume()  # the burst still holds
+
+
+def test_the_server_rate_limit_runs_on_the_monotonic_clock(settings):
+    from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+    from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
+
+    from datamcp.server import MonotonicTokenBucket, build_server
+
+    mcp, _ = build_server(settings, auth=StaticTokenVerifier(tokens={}))
+    limits = [middleware for middleware in mcp.middleware if isinstance(middleware, RateLimitingMiddleware)]
+    assert len(limits) == 1 and isinstance(limits[0].global_limiter, MonotonicTokenBucket)
+
+
 def test_instructions_fit_what_chatgpt_reads():
     from datamcp.server import INSTRUCTIONS
 

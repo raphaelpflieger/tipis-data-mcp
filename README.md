@@ -132,8 +132,9 @@ pseudonymous processing decision and the copies created in provider conversation
   container after a secret change.
 - **Upgrade FastMCP**: bump `fastmcp==` in `pyproject.toml`, `make lock`, `make test`, read the
   release notes for the OAuth proxy (`_extract_upstream_claims`, `_token_validator`,
-  `_upstream_*_endpoint` are the private members `datamcp/auth.py` and the tests rely on),
-  deploy with `--tags app`.
+  `_upstream_*_endpoint` are the private members `datamcp/auth.py` and the tests rely on; the
+  rate limit's `global_limiter` and its bucket's `tokens` / `last_refill` / `_lock` are what
+  `datamcp/server.py` replaces to run it on the monotonic clock), deploy with `--tags app`.
 - **Logs**: `docker compose logs -f` (process), `logs/datamcp.jsonl` (audit: one line per call,
   12 weekly rotations), `/var/log/nginx/data-mcp.*.log`.
 - **Restore**: nothing to restore beyond the repo, the vault and the DNS record; the OAuth state

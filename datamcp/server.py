@@ -6,12 +6,13 @@ Run: `python -m datamcp.server` (the container CMD). Configuration: datamcp/conf
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 from fastmcp import FastMCP
-from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware
+from fastmcp.server.middleware.rate_limiting import RateLimitingMiddleware, TokenBucketRateLimiter
 from key_value.aio.stores.filetree import (
     FileTreeStore,
     FileTreeV1CollectionSanitizationStrategy,
@@ -42,6 +43,33 @@ INSTRUCTIONS = (
     "aggregated SELECT with query. Answer in the user's language (French by default); cite the dataset, "
     "the 'as of' date and the sample size of every figure."
 )
+
+
+class MonotonicTokenBucket(TokenBucketRateLimiter):
+    """FastMCP's bucket reads the wall clock: a clock stepping back (NTP, a VM resync) drives its
+    tokens negative and refuses every call for about as long as the step (seen in the tests on WSL,
+    -2.5 s → -300 tokens). The monotonic clock never steps back."""
+
+    def __init__(self, capacity: int, refill_rate: float):
+        super().__init__(capacity, refill_rate)
+        self.last_refill = time.monotonic()
+
+    async def consume(self, tokens: int = 1) -> bool:
+        async with self._lock:
+            now = time.monotonic()
+            self.tokens = min(self.capacity, self.tokens + (now - self.last_refill) * self.refill_rate)
+            self.last_refill = now
+            if self.tokens < tokens:
+                return False
+            self.tokens -= tokens
+            return True
+
+
+class GlobalRateLimit(RateLimitingMiddleware):
+    def __init__(self, max_requests_per_second: float, burst_capacity: int):
+        super().__init__(max_requests_per_second=max_requests_per_second, burst_capacity=burst_capacity,
+                         global_limit=True)
+        self.global_limiter = MonotonicTokenBucket(self.burst_capacity, self.max_requests_per_second)
 
 
 def client_storage(settings: Settings):
@@ -107,8 +135,7 @@ def build_server(settings: Settings, *, auth=None) -> tuple[FastMCP, Services]:
         middleware=[
             AllowlistMiddleware(allowlist, audit, enabled=settings.enabled),
             # MCP-level throttle on top of nginx's limit_req (two users, one model: a burst is a chat turn)
-            RateLimitingMiddleware(max_requests_per_second=settings.rate_limit_rps,
-                                   burst_capacity=settings.rate_limit_burst, global_limit=True),
+            GlobalRateLimit(settings.rate_limit_rps, settings.rate_limit_burst),
             ExecutionMiddleware(services),
         ],
         lifespan=lifespan,
