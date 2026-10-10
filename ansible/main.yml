@@ -165,6 +165,8 @@
       command: docker compose up -d --force-recreate --remove-orphans
       args:
         chdir: "{{ clone_dest }}"
+      # command enters chdir before its check-mode skip: a first --check has no clone to enter
+      when: not ansible_check_mode
       tags: [app, secrets]
 
     - name: wait for /healthz
