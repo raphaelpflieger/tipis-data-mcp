@@ -88,7 +88,8 @@
   site-wide sessions. The traffic tool covers tracked viewport pages only.
   `viewport_plausible_daily_stats` (visitors per area page per day, by source),
   `viewport_plausible_origin_daily_stats` (where visitors come from), `search_console_queries` /
-  `search_console_pages` (Google Search; a query row carries no page), `google_ads_*` (paid),
+  `search_console_pages` (Google Search; a query row carries no page; pages = guide pages only,
+  fetched when an admin opens their chart, so days are missing), `google_ads_*` (paid),
   `competitor_daily_stats` (competitors' public rankings).
 - **Partners.** `xml_feeds` are agencies' feeds importing listings (`from_xml_feed = true`);
   `xml_feed_daily_stats` / `monthly_feed_volumes` their volumes.
