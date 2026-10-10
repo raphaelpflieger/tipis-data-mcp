@@ -14,6 +14,8 @@ from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 
+from datamcp.contract import DEFINITIONS_SQL
+
 from .conftest import ALICE, Served, SCHEMA_SQL, make_settings, serve
 
 
@@ -253,3 +255,64 @@ async def test_kill_switch(prepared_db, tmp_path, secrets_dir):
             with pytest.raises(ToolError) as raised:
                 await c.call_tool("query", {"database": "primary", "sql": "SELECT 1"})
             assert "disabled" in str(raised.value)
+
+
+# the two city views as tipis-web builds them, with three cities over two days
+CITY_SQL = """
+DROP TABLE IF EXISTS public.city_snapshots CASCADE;
+CREATE TABLE public.city_snapshots (
+  canonical_path text, area_name text, country_code text, currency_code text, computed_on date,
+  online_listings integer, online_listings_date date, online_profiles integer, online_profiles_date date,
+  median_rent_per_m2 numeric, median_rent_samples integer, median_rent_computed_on date,
+  median_profile_budget integer, median_profile_budget_samples integer, members_count integer, members_date date,
+  trend jsonb);
+INSERT INTO public.city_snapshots
+SELECT path, name, 'fr', 'EUR', day, listings, day - 1, 100, day - 1, rent, samples, DATE '2026-09-20',
+       600, 800, 9000, DATE '2026-09-20', '[{"month": "2025-10-01", "average": 421}, {"month": "2025-11-01", "average": 540}]'
+FROM (VALUES ('/fr/auvergne-rhone-alpes/lyon', 'Lyon', 410, 42.86, 1897),
+             ('/fr/ile-de-france/paris', 'Paris', 466, NULL, 12),
+             ('/fr/nouvelle-aquitaine/bordeaux', 'Bordeaux', 316, 50.34, 1298)) AS c(path, name, listings, rent, samples),
+     (VALUES (DATE '2026-10-09'), (DATE '2026-10-10')) AS d(day);
+CREATE VIEW analytics.city_figures_snapshots AS SELECT * FROM public.city_snapshots;
+CREATE VIEW analytics.city_figures AS SELECT s.* FROM analytics.city_figures_snapshots s
+  WHERE s.computed_on = (SELECT max(computed_on) FROM analytics.city_figures_snapshots);
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO tipis_analytics;
+""" + f"UPDATE analytics._contract SET definitions = ({DEFINITIONS_SQL}) WHERE id = 1;"
+
+
+async def test_city_tools_answer_with_their_defaults(served: Served, prepared_db):
+    with changed_database(prepared_db, CITY_SQL):
+        async with client(served, "alice-token") as c:
+            ranked = text_of(await c.call_tool("top_cities", {"limit": 2}))  # the default metric is also a fixed column
+            assert ranked.startswith("area_name,canonical_path,online_listings,online_listings_date,computed_on\nParis,")
+            assert "\nLyon," in ranked and "Bordeaux" not in ranked
+            rents = text_of(await c.call_tool("top_cities", {"metric": "median_rent_per_m2"}))
+            assert "median_rent_per_m2,median_rent_samples" in rents and "Paris" not in rents  # no median, not ranked
+            lyon = text_of(await c.call_tool("city_figures", {"city": "lyon"}))
+            assert ",410," in lyon and "2025-10: 421; 2025-11: 540" in lyon and '""month""' not in lyon
+
+
+async def test_every_tool_is_read_only_titled_and_plain_text(served: Served):
+    async with client(served, "alice-token") as c:
+        tools = await c.list_tools()
+    assert len(tools) == 9
+    for tool in tools:
+        assert tool.title and tool.title != tool.name.replace("_", " ").title(), tool.name  # a French title, not the auto one
+        assert tool.annotations.read_only_hint is True and tool.annotations.destructive_hint is False, tool.name
+        assert tool.annotations.open_world_hint is False and tool.annotations.title == tool.title, tool.name
+        assert tool.output_schema is None, tool.name  # no structuredContent copy of the text
+
+
+def test_first_sentence_keeps_abbreviations():
+    from datamcp.tools import _first_sentence
+
+    assert _first_sentence("Monthly completed revenue (excl. and incl. VAT, converted to EUR) by type. Refunds excluded") == \
+        "Monthly completed revenue (excl. and incl. VAT, converted to EUR) by type"
+    assert _first_sentence("Daily state (MRR ledger): plan, MRR excl. VAT. More") == "Daily state (MRR ledger): plan, MRR excl. VAT"
+    assert _first_sentence("Accommodation ads. Online = published") == "Accommodation ads"
+
+
+def test_instructions_fit_what_chatgpt_reads():
+    from datamcp.server import INSTRUCTIONS
+
+    assert len(INSTRUCTIONS) <= 512 and "data://" not in INSTRUCTIONS  # claude.ai cannot read a resource itself

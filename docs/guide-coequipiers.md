@@ -7,17 +7,21 @@ au fournisseur restent des données personnelles lorsqu’ils concernent des mem
 ## Comment demander
 
 - Dites ce que vous voulez **produire** (un tableau, un graphique, un paragraphe d'article) et
-  sur quoi (une ville, une période, un type de logement). Claude commence par lister les jeux de
-  données (`list_datasets`), lit la description du bon jeu (`describe_dataset`) puis interroge
-  (`query`). Laissez-le faire ces étapes.
+  sur quoi (une ville, une période, un type de logement). Pour les villes, Claude a des outils
+  directs (`top_cities`, `city_figures`) ; sinon il liste les jeux de données (`list_datasets`, qui
+  donne aussi les règles de calcul), lit la description du bon jeu (`describe_dataset`) puis
+  interroge (`query`). Laissez-le faire ces étapes.
 - Précisez la période (« sur les 12 derniers mois », « en septembre 2026 ») et le périmètre
   (« France », « Lyon », « annonces organiques hors flux partenaires »).
 - Demandez toujours **la date des données** (« au 24 septembre 2026 ») et **l'échantillon** (« sur
   2 606 annonces »). Claude doit les citer ; sinon, demandez-les.
 - Pour une ville, commencez par « donne-moi les chiffres clés de Lyon » : ce sont exactement ceux
   de la page ville du site (outil `city_figures`), ils ne peuvent pas contredire le site.
-- Trois formats prêts à l'emploi existent dans le menu des prompts du connecteur : **Rapport
-  ville**, **Baromètre des loyers**, **Fiche chiffres pour un article**.
+- Le mois en cours est toujours partiel, et les compteurs d'activité ont un jour ou deux de
+  retard : Claude doit dire jusqu'à quelle date il compte.
+- Trois formats prêts à l'emploi existent : **Rapport ville**, **Baromètre des loyers**, **Fiche
+  chiffres pour un article** (menu « + » → Données LCDC, quand claude.ai les affiche ; sinon
+  demandez-les en toutes lettres : « prépare un rapport chiffré sur Lyon pour un article »).
 
 ## Dix questions qui marchent
 
@@ -27,8 +31,9 @@ au fournisseur restent des données personnelles lorsqu’ils concernent des mem
 4. Quelle part des annonces en ligne vient des flux partenaires, par pays ?
 5. Quel est le loyer médian d'une chambre en colocation par département en Île-de-France (annonces en ligne, plus de 30 annonces) ?
 6. Combien de nouveaux profils de locataires par mois en 2026, et quelle tranche d'âge domine ?
-7. Quelles requêtes Google amènent le plus de clics sur nos guides ce mois-ci ?
-8. Quel est le taux de réponse médian des propriétaires par ville (statistiques `owner_responsiveness`) ?
+7. Quelles requêtes Google nous ont amené le plus de clics le mois dernier ? (les requêtes ne disent pas
+   sur quelle page elles arrivent)
+8. Combien de profils de locataires actifs, par tranche d'âge ?
 9. Combien de messages et de contacts par jour sur les 30 derniers jours (`daily_event_counts`) ?
 10. Quelles pages du guide ont perdu le plus d'impressions Google entre juillet et septembre ?
 

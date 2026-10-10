@@ -33,13 +33,14 @@ from .tools import Services, register
 
 logger = logging.getLogger("datamcp")
 
+# claude.ai does not pass instructions to the model (Claude Code does; ChatGPT reads the first 512
+# characters): the rules that matter live in the tool descriptions and outputs, this is the routing.
 INSTRUCTIONS = (
-    "Read-only analytics of La Carte des Colocs (two PostgreSQL databases exposed through the "
-    "analytics schema: pseudonymous personal records, accessible only to authorized accounts). "
-    "Use individual records only for authorized internal analysis; publish aggregated statistics. Start with list_datasets, then "
-    "describe_dataset, then query (one SELECT, CSV back); read data://dictionary for the domain "
-    "rules. Answer in the user's language (French by default) and cite the dataset and the 'as of' "
-    "date of every figure."
+    "Read-only analytics of La Carte des Colocs (pseudonymous records; publish aggregates only). "
+    "Cities today: top_cities, city_figures; a city's history: rent_trend; area pages' audience: "
+    "traffic_series; partner feeds: feed_volumes. Otherwise list_datasets, describe_dataset, then one "
+    "aggregated SELECT with query. Answer in the user's language (French by default); cite the dataset, "
+    "the 'as of' date and the sample size of every figure."
 )
 
 

@@ -4,6 +4,8 @@ never as 500s."""
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import date
 from typing import Annotated, Literal
 
@@ -21,6 +23,12 @@ from .guard import GuardError, guard
 
 DatabaseName = Literal["primary", "metrics"]
 TopMetric = Literal["online_listings", "online_profiles", "median_rent_per_m2", "median_profile_budget", "members_count"]
+# the column that qualifies each ranked figure (sample size or date)
+TOP_METRIC_BASIS = {"online_listings": "online_listings_date", "online_profiles": "online_profiles_date",
+                    "median_rent_per_m2": "median_rent_samples", "median_profile_budget": "median_profile_budget_samples",
+                    "members_count": "members_date"}
+# Every tool only reads a closed database: clients group them as read-only, no confirmation needed.
+READ_ONLY = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 
 
 class Services:
@@ -41,12 +49,20 @@ class Services:
 def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one registration per tool
     settings, catalog = services.settings, services.catalog
 
-    @mcp.tool(
-        name="list_datasets",
+    def tool(name: str, title: str, description: str):
+        # the title twice (clients read either); text content only: no structuredContent copy of the CSV
+        return mcp.tool(name=name, title=title, description=description, annotations={**READ_ONLY, "title": title},
+                        output_schema=None)
+
+    @tool(
+        name="list_datasets", title="Lister les jeux de données",
         description=(
-            "List the datasets (views) available in one or both databases with their description. "
-            "'primary' holds the site's data (members, listings, chats, payments, guides, geography), "
-            "'metrics' the event stream and its daily counts. Start here, then describe_dataset."
+            "Catalogue of the datasets (views) of one or both databases, one line each: 'primary' = the "
+            "site's data (members, listings, chats, payments, guides, geography), 'metrics' = the event "
+            "stream and its daily/monthly counts. Call it once before your first SQL, then describe_dataset "
+            "on what you will query. Skip it when a dedicated tool answers: top_cities / city_figures "
+            "(cities today), rent_trend (a city's history), traffic_series (area pages' audience), "
+            "feed_volumes (partner feeds)."
         ),
     )
     async def list_datasets(database: DatabaseName | None = None) -> str:
@@ -62,15 +78,16 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         services.audit.log("list_datasets", email=current_email(), database=database)
         return "\n".join(lines)
 
-    @mcp.tool(
-        name="describe_dataset",
+    @tool(
+        name="describe_dataset", title="Décrire un jeu de données",
         description=(
-            "The columns of one dataset: name, type and meaning. Optional categorical values come "
-            "with sample counts. Always call it before writing SQL against a dataset."
+            "One dataset's description (what a row is, its filters and caveats) and its columns (name, "
+            "type, meaning). Call it before writing SQL against a dataset. include_values=true adds the "
+            "values of up to eight categorical columns, counted on a 5000-row sample (not totals)."
         ),
     )
     async def describe_dataset(
-        database: DatabaseName,
+        database: Annotated[DatabaseName, Field(description="The database list_datasets shows it in")],
         dataset: Annotated[str, Field(description="Dataset name, e.g. listings or analytics.listings")],
         include_values: Annotated[bool, Field(description="Sample up to eight categorical columns (5000 rows each); counts are sample counts")] = False,
     ) -> str:
@@ -94,18 +111,21 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         services.audit.log("describe_dataset", email=current_email(), database=database, dataset=found.name)
         return "\n".join(lines)
 
-    @mcp.tool(
-        name="query",
+    @tool(
+        name="query", title="Requête SQL (lecture seule)",
         description=(
-            "Run one read-only SELECT on one database and get CSV back. Only the analytics schema is "
-            "readable; aggregates are what you want (GROUP BY, count, avg, percentile_cont). Limits: "
-            f"{settings.query_timeout_s} s, {settings.max_rows} rows, {settings.max_result_chars} characters "
-            "— aggregate or filter on a date range when a result is cut. Never publish a single row "
-            "about a member or a listing."
+            "Run one read-only PostgreSQL SELECT on one database; returns CSV and a line with the row "
+            "count. Only analytics.* is readable. Aggregate in SQL (GROUP BY month or city, count, sum, "
+            "percentile_cont) rather than fetching rows. Limits: "
+            f"{settings.query_timeout_s} s, {settings.max_rows} rows, {settings.max_result_chars} characters. "
+            "Traps: an online listing is published AND NOT blacklisted AND (validated OR auto_validated); "
+            "daily_event_counts and monthly_event_counts hold one row per action AND canonical_domain, so "
+            "sum over domains; the current month is partial; compare lower(payment_status). Individual "
+            "rows are for internal analysis only: publish aggregates."
         ),
     )
     async def query(
-        database: DatabaseName,
+        database: Annotated[DatabaseName, Field(description="primary (site data) or metrics (events and their counts)")],
         sql: Annotated[str, Field(description="One SELECT statement (EXPLAIN goes to explain_query)")],
         max_rows: Annotated[int, Field(ge=1, description="Row cap (the server caps it at its own maximum)")] = 500,
     ) -> str:
@@ -127,9 +147,11 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
             notes.append(f"cut at {settings.max_result_chars} characters: select fewer columns or aggregate more")
         return f"{text}\n\n[{'; '.join(notes)}]"
 
-    @mcp.tool(
-        name="explain_query",
-        description="The PostgreSQL plan of a SELECT (EXPLAIN without ANALYZE): use it before a heavy query on the 200 M-row events table.",
+    @tool(
+        name="explain_query", title="Plan d'exécution d'une requête",
+        description=("The PostgreSQL plan of a SELECT (EXPLAIN, never ANALYZE), without running it. Only "
+                     "useful before a heavy query on metrics.events (≈ 200 M rows); series come from "
+                     "daily_event_counts instead."),
     )
     async def explain_query(database: DatabaseName, sql: str) -> str:
         email = current_email() or "?"
@@ -143,15 +165,17 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
             text += "\n[plan cut at the output limit; simplify the query]"
         return text
 
-    @mcp.tool(
-        name="city_figures",
+    @tool(
+        name="city_figures", title="Chiffres clés d'une ville",
         description=(
-            "The figures the site shows on a city page today (listings and tenant profiles online, "
-            "median rent per m² with its sample size, tenant budget, members, 12-month trend). "
-            "Quote these in an article: they cannot contradict the site. City by name (Lyon) or path (/fr/auvergne-rhone-alpes/lyon)."
+            "Today's figures of one city exactly as its page on the site shows them: listings and tenant "
+            "profiles online (nightly count and its date), median rent per m² with its sample size and "
+            "computation date, median tenant budget, members, 12-month trend of listings online. Quote "
+            "these in an article: they cannot contradict the site. Covers the ≈ 70 cities with a guide hub "
+            "or at least 30 listings online."
         ),
     )
-    async def city_figures(city: str) -> str:
+    async def city_figures(city: Annotated[str, Field(description="City name (Lyon) or path (/fr/auvergne-rhone-alpes/lyon)")]) -> str:
         sql = """
             SELECT canonical_path, area_name, country_code, currency_code, computed_on,
                    online_listings, online_listings_date, online_profiles, online_profiles_date,
@@ -165,18 +189,23 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         if not result.rows:
             raise ToolError(f"no city figures for {city!r}: the city has no hub or fewer than 30 listings online; "
                             "try query on analytics.viewport_daily_stats or analytics.viewports")
+        result.rows = [(*row[:-1], _compact_trend(row[-1])) for row in result.rows]
         text, _ = result.csv(settings.max_result_chars)
         services.audit.log("city_figures", email=current_email(), city=city)
-        return f"{text}\n\n[as of computed_on; a null median means fewer than 30 listings over 365 days]"
+        return f"{text}\n\n[figures as of their own *_date / *_computed_on; a null median means fewer than 30 rents over 365 days]"
 
-    @mcp.tool(
-        name="rent_trend",
+    @tool(
+        name="rent_trend", title="Historique des chiffres d'une ville",
         description=(
-            "Day-by-day history of a city's figures (median rent per m², sample size, listings online) "
-            "from the daily snapshots, plus the 12-month trend of listings online. City by name or path."
+            "Day-by-day history of one city's published figures (median rent per m² with its sample size, "
+            "listings and tenant profiles online) from the daily snapshots, which start on 2026-09-28, plus "
+            "the monthly average of listings online over the last 12 complete months. The median is a "
+            "rolling 365-day figure recomputed monthly: a flat line means no recomputation, not stable "
+            "rents. Listings online since 2024 per day: query viewport_daily_stats."
         ),
     )
-    async def rent_trend(city: str, months: Annotated[int, Field(ge=1, le=60)] = 12) -> str:
+    async def rent_trend(city: Annotated[str, Field(description="City name (Lyon) or path (/fr/auvergne-rhone-alpes/lyon)")],
+                         months: Annotated[int, Field(ge=1, le=60, description="How far back, in months")] = 12) -> str:
         sql = """
             SELECT computed_on, area_name, median_rent_per_m2, median_rent_samples, online_listings, online_profiles
             FROM analytics.city_figures_snapshots
@@ -191,18 +220,27 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
                              "OR canonical_path = %(city)s OR canonical_path LIKE %(suffix)s LIMIT 1",
                              {"city": city.strip(), "suffix": f"%/{_slug(city)}"})
         text, _ = result.csv(settings.max_result_chars)
-        trend_text = trend.rows[0][0] if trend.rows else None
+        trend_text = _compact_trend(trend.rows[0][0]) if trend.rows else None
         services.audit.log("rent_trend", email=current_email(), city=city, months=months)
-        return f"{text}\n\n12-month trend of listings online (monthly averages): {trend_text}\n[{len(result.rows)} daily snapshots]"
+        first = f" from {result.rows[0][0]}" if result.rows else ""
+        return (f"{text}\n\n12-month trend of listings online (monthly averages): {trend_text}\n"
+                f"[{len(result.rows)} daily snapshots{first}; the snapshots start on 2026-09-28]")
 
-    @mcp.tool(
-        name="top_cities",
-        description="Rank the cities of a country by one of today's figures (online_listings, online_profiles, median_rent_per_m2, median_profile_budget, members_count).",
+    @tool(
+        name="top_cities", title="Classement des villes",
+        description=("Rank the cities of a country by one of today's city-page figures: the answer to « the N "
+                     "cities with the most listings / the highest rents ». Each row carries the figure's date or "
+                     "sample size. Covers the ≈ 70 cities with a guide hub or at least 30 listings online, "
+                     "nearly all in France."),
     )
-    async def top_cities(metric: TopMetric = "online_listings", country: str = "fr",
-                         limit: Annotated[int, Field(ge=1, le=100)] = 20) -> str:
+    async def top_cities(metric: Annotated[TopMetric, Field(description="The figure to rank by")] = "online_listings",
+                         country: Annotated[str, Field(description="ISO country code: fr (France), be, ca…")] = "fr",
+                         limit: Annotated[int, Field(ge=1, le=100, description="How many cities")] = 20) -> str:
+        # dict.fromkeys: the ranked metric may already be one of the fixed columns
+        columns = ", ".join(dict.fromkeys(["area_name", "canonical_path", metric, TOP_METRIC_BASIS[metric],
+                                           "online_listings", "computed_on"]))
         sql = f"""
-            SELECT area_name, canonical_path, {metric}, median_rent_samples, online_listings, computed_on
+            SELECT {columns}
             FROM analytics.city_figures
             WHERE country_code = %(country)s AND {metric} IS NOT NULL
             ORDER BY {metric} DESC NULLS LAST LIMIT %(limit)s
@@ -210,17 +248,19 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         result = await _fetch(services, "primary", sql, {"country": country.strip().lower(), "limit": int(limit)})
         text, _ = result.csv(settings.max_result_chars)
         services.audit.log("top_cities", email=current_email(), metric=metric, country=country)
-        return f"{text}\n\n[{len(result.rows)} cities; medians rest on median_rent_samples listings over 365 days]"
+        return f"{text}\n\n[{len(result.rows)} cities (those with a guide hub or at least 30 listings online); a median rests on its *_samples rents or budgets over 365 days]"
 
-    @mcp.tool(
-        name="traffic_series",
+    @tool(
+        name="traffic_series", title="Audience des pages de zones",
         description=(
-            "Daily visitors, visits and pageviews of an area's pages (Plausible), by acquisition source, "
-            "for a viewport path (/fr/auvergne-rhone-alpes/lyon), or all tracked viewport pages when empty. "
-            "Visitors and visits are sums of page-level counts, not unique people or site-wide sessions."
+            "Daily visitors, visits and pageviews of the site's area pages (Plausible) by acquisition source "
+            "(Google, direct, e-mail, paid, AI assistants), for one area or summed over all tracked area "
+            "pages; data from 2026-02-19, the last day can be partial. Visitors and visits are sums of "
+            "page-level counts, not unique people or site-wide sessions."
         ),
     )
-    async def traffic_series(viewport_path: str = "", months: Annotated[int, Field(ge=1, le=36)] = 6) -> str:
+    async def traffic_series(viewport_path: Annotated[str, Field(description="Area path (/fr/auvergne-rhone-alpes/lyon); empty = all tracked area pages")] = "",
+                             months: Annotated[int, Field(ge=1, le=36, description="How far back, in months")] = 6) -> str:
         if viewport_path.strip():
             sql = """
                 SELECT s.date, s.visitors, s.visits, s.pageviews, s.visitors_seo_google, s.visitors_direct,
@@ -246,11 +286,13 @@ def register(mcp: FastMCP, services: Services) -> None:  # noqa: C901 — one re
         return (f"{text}\n\n[{len(result.rows)} days{'; cut for size' if clipped else ''}; "
                 "tracked viewport pages only; visitors and visits can count the same person/session across pages]")
 
-    @mcp.tool(
-        name="feed_volumes",
-        description="Monthly import volumes of the partner feeds (listings published, updated, removed, average online) by feed identity and country.",
+    @tool(
+        name="feed_volumes", title="Volumes des flux partenaires",
+        description=("Monthly import volumes of the partner XML feeds (listings published, updated, removed, "
+                     "average online) by feed identity (agency type), feed standard and country; the current "
+                     "month is partial."),
     )
-    async def feed_volumes(months: Annotated[int, Field(ge=1, le=36)] = 12) -> str:
+    async def feed_volumes(months: Annotated[int, Field(ge=1, le=36, description="How far back, in months")] = 12) -> str:
         sql = """
             SELECT m.month, f.identity, f.standard, f.country, count(DISTINCT m.xml_feed_id) AS feeds,
                    sum(m.published) AS published, sum(m.updated) AS updated, sum(m.removed) AS removed,
@@ -310,17 +352,25 @@ async def _fetch(services: Services, database: str, sql: str, params: dict) -> Q
         raise ToolError(f"the built-in query failed: {str(error).splitlines()[0]}") from None
 
 
+# a full stop that ends a sentence, not an abbreviation ("MRR excl. VAT")
+_SENTENCE_END = re.compile(r"(?<!\bexcl)(?<!\bincl)(?<!\be\.g)(?<!\bi\.e)\.\s+(?=[A-Z0-9])")
+
+
 def _first_sentence(text: str | None) -> str:
     if not text:
         return ""
-    head = text.split(". ")[0]
+    head = _SENTENCE_END.split(text, maxsplit=1)[0]
     return head if len(head) < 160 else head[:157] + "…"
 
 
-def _slug(city: str) -> str:
-    import re
-    import unicodedata
+def _compact_trend(trend):
+    """[{"month": "2025-10-01", "average": 421}, …] → "2025-10: 421; …": a third of the tokens, no CSV-escaped JSON."""
+    if not isinstance(trend, list):
+        return trend
+    return "; ".join(f"{str(item.get('month'))[:7]}: {item.get('average')}" for item in trend if isinstance(item, dict))
 
+
+def _slug(city: str) -> str:
     normalized = unicodedata.normalize("NFKD", city).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
 

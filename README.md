@@ -36,6 +36,7 @@ Anthropic or OpenAI API: the account provider runs the model. No API key anywher
 | `tests/` | pytest with a throwaway PostgreSQL (`make test`) |
 | `ansible/` | deploy to etat-major (nginx vhost, certbot, secrets, compose, logrotate) |
 | `docs/rgpd.md`, `docs/guide-coequipiers.md` | the RGPD note (with the register entry) and the coworkers' one-page guide |
+| `docs/eval-questions.md` | twelve real questions with their expected tool path and reference figures |
 
 ## Deploy (Raphaël, from the checkout on the dev box)
 
@@ -64,7 +65,9 @@ Post-deploy checks (from an allowed admin IP):
 
 ```bash
 curl -sS https://data-mcp.tipis.com/healthz                       # {"ok": true, ...}
-curl -sSI https://data-mcp.tipis.com/mcp                          # 401 + WWW-Authenticate: Bearer resource_metadata=…
+curl -sS -D - -o /dev/null -X POST https://data-mcp.tipis.com/mcp -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+                         # 401 + WWW-Authenticate: Bearer resource_metadata=… (a GET or HEAD answers 405)
 curl -sS https://data-mcp.tipis.com/.well-known/oauth-protected-resource/mcp
 make check-drift   # on the box, with tipis-web's db/analytics_allowlist.yml copied next to the compose file
 npx @modelcontextprotocol/inspector   # URL https://data-mcp.tipis.com/mcp, Streamable HTTP, OAuth → Google consent
@@ -75,8 +78,26 @@ npx @modelcontextprotocol/inspector   # URL https://data-mcp.tipis.com/mcp, Stre
 Settings → Connectors → *Add custom connector* → name « Données LCDC », URL
 `https://data-mcp.tipis.com/mcp` → Add (claude.ai registers itself through DCR; no client id to
 paste) → *Connect* → Google consent with the organisation's Google account → back in claude.ai,
-open the connector's tool settings and set `query` to **Always allow**. Optional: a Project
+open the connector's tool settings and set the **Read-only tools** group (all 9 tools carry
+`readOnlyHint`) to **Always allow**. claude.ai appears to key each approval on the tool's name *and
+a hash of its description and parameter descriptions* (read from its client code, not documented): a
+release that rewords a tool sends it back to "needs approval" (set it again once), and the tool list
+is cached for hours (connector settings → refresh the tools list). Batch wording changes into one
+release. Optional: a Project
 « Données LCDC » whose instructions are `docs/guide-coequipiers.md`.
+
+What the model sees (checked 2026-10-10, sources in `docs/eval-questions.md`):
+
+- claude.ai (web, desktop) does **not** pass the server `instructions` to the model (Claude Code
+  does; ChatGPT reads their first 512 characters): every rule that matters is in the tool
+  descriptions and in what `list_datasets` / `describe_dataset` return.
+- The model cannot read a resource itself: `data://dictionary` reaches it only when the user
+  attaches it (« + » → the connector). Prompts may not show in claude.ai for a custom connector:
+  the guide tells the coworkers to ask for the same report in plain words.
+- Connector tools appear to be deferred (user reports, undocumented): the model sees their names,
+  then loads a description through its tool search. Results reach it as the text content only
+  (no `structuredContent`: `output_schema=None`).
+- `docs/eval-questions.md` is the eval sheet: re-run it after any change to what the model reads.
 
 For ChatGPT, enable the account’s custom MCP connection and register this server with OAuth.
 Copy the **exact** redirect URI shown in its management page to `datamcp_chatgpt_redirect_uri`
