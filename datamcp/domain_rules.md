@@ -61,8 +61,8 @@
 - **Brands.** `canonical_domain` (events and their counts): `lacartedescolocs.fr` (France,
   historic), `lacartedescolocs.com`, and the `tipis.*` domains (international, launched 2026, a
   handful of events so far). `''` = before 2023-08-09 the domain was not recorded (La Carte des
-  Colocs): never filter on the domain for totals. One malformed value (`["lacartedescolocs.fr",
-  "€"]`, ≈ 1 000 events) is noise. `published_brand` (listings) holds brand keys (`lacartedescolocs`).
+  Colocs): never filter on the domain for totals. The malformed `["lacartedescolocs.fr", "€"]`
+  (1,082 events, 2024-03 to 2026-06, no longer written) means `lacartedescolocs.fr`. `published_brand` (listings) holds brand keys (`lacartedescolocs`).
 - **Geography.** `viewports` are the areas of the site (country, region = `administrative`,
   county, city, district) keyed by `canonical_path` (e.g. `/fr/auvergne-rhone-alpes/lyon`).
   `viewport_ancestries` links a city to its parents. `listings.utm_geotag` is the city's
@@ -89,7 +89,8 @@
   `viewport_plausible_daily_stats` (visitors per area page per day, by source),
   `viewport_plausible_origin_daily_stats` (where visitors come from), `search_console_queries` /
   `search_console_pages` (Google Search; a query row carries no page; pages = guide pages only,
-  with gaps before 2026-10: check the dates present), `google_ads_*` (paid),
+  with gaps before 2026-10: check the dates present), `google_ads_*` (paid: the Google Ads
+  campaigns behind `visitors_paid`; read their spend before explaining a change there),
   `competitor_daily_stats` (competitors' public rankings).
 - **Partners.** `xml_feeds` are agencies' feeds importing listings (`from_xml_feed = true`);
   `xml_feed_daily_stats` / `monthly_feed_volumes` their volumes.
