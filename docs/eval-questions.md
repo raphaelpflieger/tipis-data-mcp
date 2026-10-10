@@ -37,8 +37,28 @@ claude.ai web cannot do, so these were most likely a Claude Code session, not cl
 | 5 (history since 2013) | 15 calls, 0 errors: list_datasets → describe monthly_event_counts → 4 queries → describe daily_event_counts → 4 queries probing where each series starts and its spikes → `data://dictionary` read once, mid-way → 1 more probe → describe + 1 query on monthly_new_listings. Sums over domains done right. ~5 calls were the model rediscovering series start dates; the organic / imported split per year came from `monthly_new_listings`, i.e. surviving listings only (2024: 25,409 rows vs 94,432 created) | |
 | 1 (city ranking) | 3 calls, 0 errors: describe city_figures → query top 25 → a count query. `top_cities` never called (the broken default was not hit by luck) | claude.ai 2026-10-10 (top 5 asked): 1 call `top_cities`, shown as « Classement des villes », 0 errors, Paris 466 … Bordeaux 316 = reference, dated « au 9 octobre 2026 » (the nightly count's date), offers the other metrics |
 | — (sign-ups today, Paris time) | 8 calls, 0 errors: list_datasets → describe users + events → 5 queries, two on raw `events` with a narrow `enqueued_at` range (33–130 ms) | |
-| 2–4, 6–12 | not asked yet | |
+| 2 (online in France, feed share) | not asked | 4 calls: list_datasets → describe listings → `viewport_daily_stats` for /fr → listings with the search rule by `from_xml_feed`, also counting the `desactivated_at` and validated-only variants |
+| 3 (sign-ups per month) | not asked | 5 calls: list_datasets → describe ×2 → `USER_CREATED` per month → per month with first/last day and day count (the partial month measured) |
+| 4 (24-month dashboard, artifact) | not asked | 6 calls: list_datasets → describe ×2 → 4 actions per month → 24 **complete** months flagged in SQL (`complete` column) → totals; `LISTING_CREATED`, not `monthly_new_listings` |
+| 6 (rents, 5 cities, 24 months) | not asked | 6 calls: `rent_trend` × 5 → one query: yearly medians on windows ending 2026-09-20 (the page's computation date), site method |
+| 7 (monthly revenue by type) | not asked | 3 calls: list_datasets → describe monthly_revenue → by month and type since 2025-10 (the partial October included: check the text flags it) |
+| 8 (Search Console top 10) | not asked | 4 calls: list_datasets → describe → top 15 → September totals and day count |
+| 9 (partner feeds, 6 months) | not asked | 1–2 calls: (list_datasets) → `feed_volumes(6)` |
+| 10 (Bordeaux for an article) | not asked | 5 calls: list_datasets → describe listings + rooms → `city_figures` → one query on rents by publisher type over two periods (extra analysis) |
+| 11 (messages per day, 30 days) | not asked | 4 calls: list_datasets → describe → per day **summed over domains** (with the domain-row count), window ending at `max(day)` → summary (mean, median, weekday/weekend) |
+| 12 (active profiles by age band) | not asked | 3 calls: list_datasets → describe users → the online-profile rule by age band with shares |
+| 5 (history since 2013), after | 15 calls (Claude Code) | 4 calls: list_datasets → describe → first/last day of the two actions → 160 months of both series |
+| extra (Paris rents by arrondissement, 20:04) | — | 7 calls: list_datasets → describe ×4 → 5 queries rebuilding the site's median per arrondissement from postal codes, window aligned on 2026-09-20; one draft forgot the monthly-rent filter, the next had it |
 | audit session (Claude Code, 18:58–19:13) | `top_cities` default failed (duplicate column); 1 ambiguous-column error of my own | |
+
+**After, 2026-10-10 20:13–20:17 UTC (11 chats in parallel):** 45 calls for questions 2–12 (≈ 4 per
+question), **0 errors**, no refusal. Every question took the right source and the right rule: the
+search rule for online listings, `USER_CREATED` / `LISTING_CREATED` for creations, sums over
+`canonical_domain`, the online-profile rule, `rent_trend` for rent histories. The partial month was
+measured in SQL twice (questions 3 and 4). The one waste left: 9 of 11 chats opened with
+`list_datasets` (≈ 19 000 characters with its rules), including a chat a dedicated tool answered
+(question 9). The log holds the paths, not the texts: dates quoted and caveats written were not
+checked here.
 
 Reading: list_datasets opened both sessions (the rules now ride on it); the dictionary was read once,
 after nine queries; the city question went to raw SQL rather than the dedicated tool.
