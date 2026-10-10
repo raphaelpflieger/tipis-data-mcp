@@ -198,7 +198,10 @@
 
     - name: read IPv4 and IPv6 prefixes
       set_fact:
-        openai_egress_cidrs: "{{ (openai_egress.json.prefixes | selectattr('ipv4Prefix', 'defined') | map(attribute='ipv4Prefix') | list) + (openai_egress.json.prefixes | selectattr('ipv6Prefix', 'defined') | map(attribute='ipv6Prefix') | list) }}"
+        openai_egress_cidrs: "{{ (openai_prefixes | selectattr('ipv4Prefix', 'defined') | map(attribute='ipv4Prefix') | list) + (openai_prefixes | selectattr('ipv6Prefix', 'defined') | map(attribute='ipv6Prefix') | list) }}"
+      vars:
+        # served as application/octet-stream: uri leaves `json` unset, parse the raw content
+        openai_prefixes: "{{ (openai_egress.content | from_json).prefixes }}"
       tags: [nginx]
 
     - name: refuse an empty provider list
