@@ -19,7 +19,10 @@ SELECT expected = applied AND applied IS NOT NULL AND definitions = ({DEFINITION
        NOT EXISTS (
          SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
-           AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns', 'raster_columns', 'raster_overviews')
+           -- extension relations every role reads: PostGIS metadata, and pg_stat_statements (granted to
+           -- PUBLIC by the extension; other roles' query texts stay hidden from a non-privileged reader)
+           AND c.relname NOT IN ('spatial_ref_sys', 'geometry_columns', 'geography_columns', 'raster_columns', 'raster_overviews',
+                                 'pg_stat_statements', 'pg_stat_statements_info')
            AND (has_table_privilege(current_user, c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
                 OR has_any_column_privilege(current_user, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES'))
        ),

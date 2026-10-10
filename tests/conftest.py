@@ -25,6 +25,8 @@ ALICE = "alice@example.org"
 BOB = "bob@example.org"
 
 SCHEMA_SQL = """
+-- as both production databases: the extension grants SELECT on its public views to PUBLIC
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 DROP SCHEMA IF EXISTS analytics CASCADE;
 DROP TABLE IF EXISTS public.secret;
 CREATE TABLE public.secret (id serial PRIMARY KEY, email text NOT NULL, kind text NOT NULL, amount integer, day date);
