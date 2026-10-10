@@ -81,12 +81,15 @@ paste) → *Connect* → Google consent with the organisation's Google account �
 open the connector's tool settings and set the **Read-only tools** group (all 9 tools carry
 `readOnlyHint`) to **Always allow**. claude.ai appears to key each approval on the tool's name *and
 a hash of its description and parameter descriptions* (read from its client code, not documented): a
-release that rewords a tool sends it back to "needs approval" (set it again once), and the tool list
-is cached for hours (connector settings → refresh the tools list). Batch wording changes into one
-release. A client still holding the old list can also break: after the 2026-10-10 release dropped the
-`outputSchema`, every call answered « Tool … has an output schema but did not return structured
-content » until the list was refreshed (claude.ai connector settings; Claude Code `/mcp` → reconnect).
-Refresh every client right after a release that changes a tool's schema. Optional: a Project
+release that rewords a tool sends it back to "needs approval" (set it again once), and claude.ai's
+proxy caches the tool list for hours. Batch wording changes into one release. A client still holding
+the old list can also break: after the 2026-10-10 release dropped the `outputSchema`, every call
+answered « Tool … has an output schema but did not return structured content ». Refreshing the tools
+list in the connector settings and `/mcp` → reconnect in Claude Code were not enough; what worked was
+**Settings → Connectors → Données LCDC → Disconnect, then Connect** (Google sign-in again), after which
+a new claude.ai chat used the new list (Claude Code sessions opened before kept the old one). Do that
+on every account right after a release that changes a tool's schema, then set Always allow again.
+Optional: a Project
 « Données LCDC » whose instructions are `docs/guide-coequipiers.md`.
 
 What the model sees (checked 2026-10-10, sources in `docs/eval-questions.md`):
@@ -140,6 +143,10 @@ pseudonymous processing decision and the copies created in provider conversation
     Anthropic’s published range or OpenAI’s current connector ranges; refresh via `--tags nginx`), certificate, container up (`/healthz`), OAuth metadata answering in < 10 s.
   - 401 loops after connecting: the account is not in the allowlist (audit `auth_refused`), or
     the token signing key changed (reconnect), or `email_verified` is false on that Google account.
+  - Every call fails with « Tool … has an output schema but did not return structured content » (or
+    another schema mismatch) right after a release: the client holds the old tool list. claude.ai:
+    Settings → Connectors → Données LCDC → Disconnect, then Connect, and a new chat; Claude Code: a
+    new session.
   - Google *Access blocked: app not verified* / *403 access_denied*: the account is not a test
     user of the OAuth client, or the redirect URI differs from `https://data-mcp.tipis.com/auth/callback`.
   - Token endpoint slower than 10 s: the Google token exchange or the file store is slow; check
