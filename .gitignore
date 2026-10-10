@@ -8,5 +8,4 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-ansible/ansible_secrets.yml
 ansible/files/*.crt
