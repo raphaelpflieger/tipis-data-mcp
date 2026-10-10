@@ -83,7 +83,10 @@ open the connector's tool settings and set the **Read-only tools** group (all 9 
 a hash of its description and parameter descriptions* (read from its client code, not documented): a
 release that rewords a tool sends it back to "needs approval" (set it again once), and the tool list
 is cached for hours (connector settings → refresh the tools list). Batch wording changes into one
-release. Optional: a Project
+release. A client still holding the old list can also break: after the 2026-10-10 release dropped the
+`outputSchema`, every call answered « Tool … has an output schema but did not return structured
+content » until the list was refreshed (claude.ai connector settings; Claude Code `/mcp` → reconnect).
+Refresh every client right after a release that changes a tool's schema. Optional: a Project
 « Données LCDC » whose instructions are `docs/guide-coequipiers.md`.
 
 What the model sees (checked 2026-10-10, sources in `docs/eval-questions.md`):

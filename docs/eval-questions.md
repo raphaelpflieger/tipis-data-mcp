@@ -27,8 +27,10 @@ Scoring per question: **calls** (tool calls before the answer), **errors** (fail
 
 ## Results
 
-Before = Raphaël's first claude.ai tests, audit log of 2026-10-10 17:34–18:17 UTC (the questions
-themselves are not logged; the paths are). Calls from 18:56 on are the audit session itself.
+Before = the calls of 2026-10-10 17:34–18:17 UTC in the audit log (the questions themselves are not
+logged; the paths are). Raphaël attached nothing: the model read `data://dictionary` on its own, which
+claude.ai web cannot do, so these were most likely a Claude Code session, not claude.ai. Calls from
+18:56 on are the audit session itself. The "After" run must be done in claude.ai to measure it.
 
 | # | Before (claude.ai, audit log 2026-10-10) | After |
 |---|---|---|
