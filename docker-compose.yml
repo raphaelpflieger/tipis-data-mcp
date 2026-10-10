@@ -1,0 +1,42 @@
+# Production stack on etat-major (athena-2), deployed by ansible/main.yml. nginx (on the host) is
+# the only entry point: the container listens on loopback only.
+services:
+  datamcp:
+    build:
+      context: .
+      target: base
+    image: tipis-data-mcp:latest
+    container_name: tipis-data-mcp
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8765:8765'
+    env_file: .env
+    environment:
+      DATAMCP_HOST: 0.0.0.0        # inside the container; the port is published on 127.0.0.1 only
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - ./secrets:/secrets:ro      # 0400, owner 10001 (the container user): Google secret, keys, DB passwords, allowlist
+      - ./certs:/certs:ro          # the two cluster CAs (sslmode=verify-full)
+      - datamcp_oauth:/data        # OAuth state (client registrations, encrypted upstream tokens)
+      - ./logs:/logs               # audit JSONL, rotated by logrotate on the host
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=6).status == 200 else 1)"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+volumes:
+  datamcp_oauth: {}

@@ -1,0 +1,11 @@
+# {{ ansible_managed }} — audit log of tipis-data-mcp: weekly, 12 weeks (RGPD note: retention of the
+# coworkers' e-mails). copytruncate: the container keeps its file handle.
+{{ clone_dest }}/logs/datamcp.jsonl {
+    weekly
+    rotate 12
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

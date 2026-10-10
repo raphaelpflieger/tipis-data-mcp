@@ -1,0 +1,12 @@
+.env
+secrets/
+certs/
+logs/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+ansible/ansible_secrets.yml
+ansible/files/*.crt

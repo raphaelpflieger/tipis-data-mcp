@@ -1,0 +1,68 @@
+# Copied from ~/apoena-mattermost/ansible/roles/ssl (2026-09-24) with the domain variable renamed.
+---
+# apt rather than pip: ubuntu >= 26.04 pythons are externally managed (PEP 668),
+# system-wide pip installs are refused
+- name: install certbot (with nginx authenticator plugin)
+  apt:
+    pkg:
+    - certbot
+    - python3-certbot-nginx
+  tags:
+    - ssl
+
+# Issuance and renewal dry-runs only make sense on the host the domain actually
+# resolves to (HTTP-01 challenges land wherever DNS points). During a server
+# migration the cert is pre-staged on the new box while DNS still points at the
+# old one — this guard makes the role skip gracefully instead of failing, and
+# start enforcing again automatically once the DNS record is flipped.
+- name: "resolve {{ datamcp_domain }} from the controller"
+  command: "dig +short {{ datamcp_domain }}"
+  delegate_to: localhost
+  become: false
+  register: datamcp_domain_dns
+  changed_when: false
+  tags:
+    - ssl
+
+- name: check if certificate for {{ datamcp_domain }} is already present on filesystem
+  stat:
+    path: "/etc/letsencrypt/live/{{ datamcp_domain }}/fullchain.pem"
+  register: cert_file
+  tags:
+    - ssl
+
+- name: "build ssl certificate for {{ datamcp_domain }} if not present on filesystem"
+  command: "certbot certonly --nginx --non-interactive --agree-tos -m {{ maintainer_email }} -d {{ datamcp_domain }}"
+  when: not cert_file.stat.exists and datamcp_domain_dns.stdout is search(ansible_host)
+  register: certbot_renew_status
+  tags:
+    - ssl
+
+- name: "simulate renew certificate for {{ datamcp_domain }} if present on filesytem (to test current config)"
+  command: "certbot renew --cert-name {{ datamcp_domain }} --dry-run"
+  when: cert_file.stat.exists and datamcp_domain_dns.stdout is search(ansible_host)
+  register: certbot_renew_status
+  tags:
+    - ssl
+
+- debug:
+    msg: "{{ certbot_renew_status.stdout_lines | default('skipped: ' + datamcp_domain + ' does not resolve to this host (pre-staged cert, renewals still happen on the DNS target)') }}"
+  when: cert_file.stat.exists
+  tags:
+    - ssl
+
+- name: ensure certbot.timer renewal service is enabled & running
+  systemd:
+    name: certbot.timer
+    state: started
+    enabled: yes
+  register: certbot_service_status
+  failed_when: certbot_service_status.state != 'started'
+  tags:
+    - ssl
+
+- debug:
+    var: certbot_service_status.status
+  when: certbot_service_status.state != 'started'
+  tags:
+    - ssl

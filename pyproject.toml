@@ -1,0 +1,33 @@
+[project]
+name = "tipis-data-mcp"
+version = "1.0.0"
+description = "Read-only MCP data connector for the coworkers of La Carte des Colocs (Claude/ChatGPT custom connector over the restricted pseudonymous analytics schema)"
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+dependencies = [
+  "fastmcp==4.0.9",
+  "psycopg[binary,pool]>=3.2",
+  "pglast>=7.0",
+  "pyyaml>=6",
+  "uvicorn>=0.35",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.27"]
+
+[project.scripts]
+datamcp = "datamcp.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["datamcp"]
+
+[tool.setuptools.package-data]
+datamcp = ["domain_rules.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

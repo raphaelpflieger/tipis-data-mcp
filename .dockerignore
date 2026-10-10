@@ -1,0 +1,9 @@
+.git
+.env
+secrets
+certs
+logs
+ansible
+docs
+.pytest_cache
+__pycache__

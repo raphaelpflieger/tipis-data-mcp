@@ -1,0 +1,4 @@
+# {{ ansible_managed }} — Google accounts allowed on the connector, one per line (hot-reloaded)
+{% for email in datamcp_allowed_emails %}
+{{ email | lower }}
+{% endfor %}

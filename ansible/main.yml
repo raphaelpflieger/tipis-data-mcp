@@ -1,0 +1,228 @@
+---
+# tipis-data-mcp on etat-major (athena-2). Same conventions as ~/apoena-mattermost/ansible/main.yml.
+#   ansible-playbook -i hosts main.yml --ask-vault-pass            # everything
+#   ... --tags app        # rebuild + restart the container only
+#   ... --tags allowlist  # the e-mail allowlist only (no restart needed: hot-reloaded)
+#   ... --tags nginx      # the vhost only (e.g. after changing datamcp_allowed_ips / datamcp_deny_all)
+#   ... --tags secrets    # re-render the secret files (then --tags app to restart)
+- hosts: datamcp
+  become: true
+  remote_user: ubuntu
+  gather_facts: true
+  vars_files:
+    - ansible_secrets.yml
+  vars:
+    datamcp_domain: data-mcp.tipis.com
+    maintainer_email: raphael.pflieger@gmail.com
+    datamcp_port: 8765
+    # Network restrictions apply to /mcp and /healthz only; browser OAuth routes stay reachable.
+    # OpenAI prefixes are fetched on each nginx deployment. Refresh with --tags nginx.
+    anthropic_egress_cidrs:
+      - "160.79.104.0/21"
+    datamcp_admin_ips:
+      - "82.67.205.71"        # Raph home
+      - "37.187.252.180"      # erinye-3 (tipis-web app host: the /healthz probe of Monitoring::PingDataMcpJob)
+      - "162.19.24.164"       # this box (local checks)
+    # Replace with the exact callback shown in ChatGPT when it supplies a callback-ID URI.
+    datamcp_chatgpt_redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect"
+    datamcp_deny_all: false   # emergency: true → 403 for everyone, --tags nginx
+    datamcp_container_uid: 10001
+    # the two cluster CA certificates, from the sibling repos on the controller
+    primary_ca_src: "{{ lookup('env', 'HOME') }}/apoena-mattermost/ansible/files/tipis-ca.crt"
+    metrics_ca_src: "{{ lookup('env', 'HOME') }}/tipis-metrics/ansible/files/tipis-metrics-ca.crt"
+    # environment (non-secret) — see .env.example for the meaning of each
+    datamcp_env:
+      DATAMCP_BASE_URL: "https://{{ datamcp_domain }}"
+      DATAMCP_MCP_PATH: "/mcp"
+      DATAMCP_PORT: "{{ datamcp_port }}"
+      DATAMCP_ENABLED: "1"
+      DATAMCP_GOOGLE_CLIENT_ID: "{{ datamcp_google_client_id }}"
+      DATAMCP_GOOGLE_CLIENT_SECRET_FILE: /secrets/google_client_secret
+      DATAMCP_JWT_SIGNING_KEY_FILE: /secrets/jwt_signing_key
+      DATAMCP_STORAGE_KEY_FILE: /secrets/storage_key
+      DATAMCP_STORAGE_DIR: /data/oauth
+      DATAMCP_ALLOWED_CLIENT_REDIRECT_URIS: "https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback,{{ datamcp_chatgpt_redirect_uri }}"
+      DATAMCP_REQUIRE_CONSENT: "1"
+      DATAMCP_ALLOWLIST_FILE: /secrets/allowed_emails.txt
+      DATAMCP_AUDIT_DIR: /logs
+      DATAMCP_QUERY_TIMEOUT_S: "60"
+      DATAMCP_MAX_ROWS: "1000"
+      DATAMCP_MAX_RESULT_CHARS: "60000"
+      DATAMCP_MAX_CONCURRENT_QUERIES: "3"
+      DATAMCP_MAX_QUERIES_PER_USER: "1"
+      DATAMCP_RATE_LIMIT_RPS: "5"
+      DATAMCP_RATE_LIMIT_BURST: "20"
+      DATAMCP_PRIMARY_DB_HOST: "10.88.0.1"
+      DATAMCP_PRIMARY_DB_PORT: "5432"
+      DATAMCP_PRIMARY_DB_NAME: tipis_production
+      DATAMCP_PRIMARY_DB_USER: tipis_analytics
+      DATAMCP_PRIMARY_DB_PASSWORD_FILE: /secrets/primary_db_password
+      DATAMCP_PRIMARY_DB_SSLMODE: verify-full
+      DATAMCP_PRIMARY_DB_SSLROOTCERT: /certs/tipis-ca.crt
+      DATAMCP_METRICS_DB_HOST: "51.210.105.166"
+      DATAMCP_METRICS_DB_PORT: "16452"
+      DATAMCP_METRICS_DB_NAME: tipis_timescale_metrics
+      DATAMCP_METRICS_DB_USER: tipis_analytics
+      DATAMCP_METRICS_DB_PASSWORD_FILE: /secrets/metrics_db_password
+      DATAMCP_METRICS_DB_SSLMODE: verify-full
+      DATAMCP_METRICS_DB_SSLROOTCERT: /certs/tipis-metrics-ca.crt
+
+  tasks:
+    - name: check docker compose v2 is available (installed by the apoena-mattermost play)
+      command: docker compose version
+      changed_when: false
+      tags: [always]
+
+    - name: "clone or update {{ clone_dest }}"
+      git:
+        repo: "https://github.com/{{ github_repository }}.git"
+        dest: "{{ clone_dest }}"
+        clone: yes
+        update: yes
+        force: yes
+      # The token travels as a per-command HTTP header: nothing lands in .git/config (it sat in the
+      # remote URL, which this task now rewrites without it — 2026-10-07, as tipis-web since 10-03).
+      environment:
+        GIT_TERMINAL_PROMPT: "0"
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: http.https://github.com/.extraheader
+        GIT_CONFIG_VALUE_0: "Authorization: Basic {{ ('x-access-token:' ~ github_access_token) | b64encode }}"
+      tags: [app]
+
+    - name: render .env (non-secret settings)
+      template:
+        src: env.j2
+        dest: "{{ clone_dest }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0640"
+      register: env_file
+      tags: [app, secrets]
+
+    - name: secrets, certs and logs directories
+      file:
+        path: "{{ clone_dest }}/{{ item.name }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.owner }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - { name: secrets, owner: "{{ datamcp_container_uid }}", mode: "0500" }
+        - { name: certs, owner: root, mode: "0755" }
+        - { name: logs, owner: "{{ datamcp_container_uid }}", mode: "0750" }
+      tags: [app, secrets, allowlist]
+
+    # each secret is its own 0400 file owned by the container user: the process reads them, nothing else does
+    - name: write the secret files
+      copy:
+        content: "{{ item.value }}\n"
+        dest: "{{ clone_dest }}/secrets/{{ item.name }}"
+        owner: "{{ datamcp_container_uid }}"
+        group: "{{ datamcp_container_uid }}"
+        mode: "0400"
+      loop:
+        - { name: google_client_secret, value: "{{ datamcp_google_client_secret }}" }
+        - { name: jwt_signing_key, value: "{{ datamcp_jwt_signing_key }}" }
+        - { name: storage_key, value: "{{ datamcp_storage_key }}" }
+        - { name: primary_db_password, value: "{{ datamcp_primary_db_password }}" }
+        - { name: metrics_db_password, value: "{{ datamcp_metrics_db_password }}" }
+      loop_control:
+        label: "{{ item.name }}"
+      no_log: true
+      register: secret_files
+      tags: [secrets]
+
+    - name: write the e-mail allowlist (hot-reloaded by the service)
+      template:
+        src: allowed_emails.txt.j2
+        dest: "{{ clone_dest }}/secrets/allowed_emails.txt"
+        owner: "{{ datamcp_container_uid }}"
+        group: "{{ datamcp_container_uid }}"
+        mode: "0400"
+      tags: [secrets, allowlist]
+
+    - name: copy the cluster CA certificates (verify-full)
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ clone_dest }}/certs/{{ item.name }}"
+        mode: "0644"
+      loop:
+        - { src: "{{ primary_ca_src }}", name: tipis-ca.crt }
+        - { src: "{{ metrics_ca_src }}", name: tipis-metrics-ca.crt }
+      tags: [app, secrets]
+
+    - name: build the image
+      command: docker compose build
+      args:
+        chdir: "{{ clone_dest }}"
+      async: 1800
+      poll: 10
+      # Ansible refuses async in check mode ("check mode and async cannot be used on same task")
+      when: not ansible_check_mode
+      tags: [app]
+
+    - name: start (or restart) the container
+      command: docker compose up -d --force-recreate --remove-orphans
+      args:
+        chdir: "{{ clone_dest }}"
+      tags: [app, secrets]
+
+    - name: wait for /healthz
+      uri:
+        url: "http://127.0.0.1:{{ datamcp_port }}/healthz"
+        status_code: 200
+      register: healthz
+      retries: 12
+      delay: 5
+      until: healthz.status == 200
+      # uri skips in check mode and `until` still reads healthz.status: nothing to probe there anyway
+      when: not ansible_check_mode
+      tags: [app, secrets]
+
+    - name: "install & configure the ssl certificate for {{ datamcp_domain }}"
+      include_role:
+        name: ssl
+      tags: [ssl, nginx]
+
+    - name: fetch the official OpenAI connector egress prefixes
+      uri:
+        url: https://openai.com/chatgpt-connectors.json
+        return_content: true
+        timeout: 15
+      register: openai_egress
+      # a read-only GET: run it in check mode too (uri would skip), so --diff shows the real vhost
+      check_mode: false
+      tags: [nginx]
+
+    - name: read IPv4 and IPv6 prefixes
+      set_fact:
+        openai_egress_cidrs: "{{ (openai_egress.json.prefixes | selectattr('ipv4Prefix', 'defined') | map(attribute='ipv4Prefix') | list) + (openai_egress.json.prefixes | selectattr('ipv6Prefix', 'defined') | map(attribute='ipv6Prefix') | list) }}"
+      tags: [nginx]
+
+    - name: refuse an empty provider list
+      assert:
+        that: openai_egress_cidrs | length > 0
+      tags: [nginx]
+
+    - name: nginx vhost
+      template:
+        src: nginx.conf.j2
+        dest: "/etc/nginx/sites-enabled/{{ datamcp_domain }}.conf"
+      notify: reload nginx
+      tags: [nginx]
+
+    - name: logrotate for the audit log
+      template:
+        src: logrotate.j2
+        dest: /etc/logrotate.d/tipis-data-mcp
+        mode: "0644"
+      tags: [app]
+
+  handlers:
+    - name: reload nginx
+      command: nginx -t
+      notify: reload nginx now
+    - name: reload nginx now
+      service:
+        name: nginx
+        state: reloaded

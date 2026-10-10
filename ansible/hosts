@@ -1,0 +1,15 @@
+; tipis-data-mcp runs on etat-major.tipis.com (athena-2), next to pgAdmin and Mattermost — same
+; box, same SSH port and key as ~/apoena-mattermost/ansible/hosts. It is also the WireGuard peer
+; 10.88.0.3 of tipis-db-1, which is how the primary database is reached.
+[datamcp]
+athena-2 ansible_host=162.19.24.164 ansible_hostname=vps-be42eeb4
+
+[datamcp:vars]
+ansible_port=37125
+ansible_user=ubuntu
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_private_key_file=~/.ssh/apoena_ansible_ed25519
+ansible_ssh_retries=5
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_become=true
+clone_dest=/home/ubuntu/tipis-data-mcp

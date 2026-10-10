@@ -1,0 +1,30 @@
+# Tests: a throwaway PostgreSQL + the test image. `docker compose -f docker-compose.test.yml run --rm tests`
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: datamcp
+      POSTGRES_PASSWORD: datamcp
+      POSTGRES_DB: datamcp
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datamcp -d datamcp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  tests:
+    build:
+      context: .
+      target: test
+    image: tipis-data-mcp:test
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATAMCP_TEST_DSN: postgresql://datamcp:datamcp@postgres:5432/datamcp
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./datamcp:/app/datamcp:ro
+    command: ["pytest", "-q", "--tb=short", "-p", "no:cacheprovider"]
