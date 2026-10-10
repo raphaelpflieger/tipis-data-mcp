@@ -35,7 +35,7 @@ claude.ai web cannot do, so these were most likely a Claude Code session, not cl
 | # | Before (claude.ai, audit log 2026-10-10) | After |
 |---|---|---|
 | 5 (history since 2013) | 15 calls, 0 errors: list_datasets → describe monthly_event_counts → 4 queries → describe daily_event_counts → 4 queries probing where each series starts and its spikes → `data://dictionary` read once, mid-way → 1 more probe → describe + 1 query on monthly_new_listings. Sums over domains done right. ~5 calls were the model rediscovering series start dates; the organic / imported split per year came from `monthly_new_listings`, i.e. surviving listings only (2024: 25,409 rows vs 94,432 created) | |
-| 1 (city ranking) | 3 calls, 0 errors: describe city_figures → query top 25 → a count query. `top_cities` never called (the broken default was not hit by luck) | |
+| 1 (city ranking) | 3 calls, 0 errors: describe city_figures → query top 25 → a count query. `top_cities` never called (the broken default was not hit by luck) | claude.ai 2026-10-10 (top 5 asked): 1 call `top_cities`, shown as « Classement des villes », 0 errors, Paris 466 … Bordeaux 316 = reference, dated « au 9 octobre 2026 » (the nightly count's date), offers the other metrics |
 | — (sign-ups today, Paris time) | 8 calls, 0 errors: list_datasets → describe users + events → 5 queries, two on raw `events` with a narrow `enqueued_at` range (33–130 ms) | |
 | 2–4, 6–12 | not asked yet | |
 | audit session (Claude Code, 18:58–19:13) | `top_cities` default failed (duplicate column); 1 ambiguous-column error of my own | |
