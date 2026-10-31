@@ -19,10 +19,15 @@
     # OpenAI prefixes are fetched on each nginx deployment. Refresh with --tags nginx.
     anthropic_egress_cidrs:
       - "160.79.104.0/21"
+    # Behind Cloudflare, nginx sees the client address from CF-Connecting-IP (apoena-mattermost's
+    # /etc/nginx/conf.d/cloudflare-real-ip.conf), and the proxied name has an AAAA: the hosts with
+    # IPv6 may arrive over it. Anthropic's egress is IPv4 only (160.79.104.0/21, docs 2026-10-31).
     datamcp_admin_ips:
-      - "82.67.205.71"        # Raph home
-      - "37.187.252.180"      # erinye-3 (tipis-web app host: the /healthz probe of Monitoring::PingDataMcpJob)
-      - "162.19.24.164"       # this box (local checks)
+      - "82.67.205.71"            # Raph home
+      - "37.187.252.180"          # erinye-3 (tipis-web app host: the /healthz probe of Monitoring::PingDataMcpJob)
+      - "2001:41d0:c:4b4::/64"    # erinye-3 over IPv6
+      - "162.19.24.164"           # this box (local checks)
+      - "2001:41d0:304:200::30c4" # this box over IPv6
     # Replace with the exact callback shown in ChatGPT when it supplies a callback-ID URI.
     datamcp_chatgpt_redirect_uri: "https://chatgpt.com/connector_platform_oauth_redirect"
     datamcp_deny_all: false   # emergency: true → 403 for everyone, --tags nginx
