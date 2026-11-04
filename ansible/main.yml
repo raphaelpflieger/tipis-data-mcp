@@ -157,7 +157,8 @@
       tags: [app, secrets]
 
     - name: build the image
-      command: docker compose build
+      # --pull: python:3.12-slim only moves when asked, and its patches arrive that way
+      command: docker compose build --pull
       args:
         chdir: "{{ clone_dest }}"
       async: 1800
