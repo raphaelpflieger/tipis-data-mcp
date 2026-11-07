@@ -5,7 +5,7 @@ description = "Read-only MCP data connector for the coworkers of La Carte des Co
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 dependencies = [
-  "fastmcp==4.0.9",
+  "fastmcp==4.1.6",
   "psycopg[binary,pool]>=3.2",
   "pglast>=7.0",
   "pyyaml>=6",

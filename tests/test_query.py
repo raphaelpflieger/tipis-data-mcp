@@ -216,13 +216,6 @@ async def test_allowlist_middleware(served: Served):
         assert "not allowed" in str(raised.value)
 
 
-async def test_unauthenticated_gets_401_with_metadata_pointer(served: Served):
-    async with httpx.AsyncClient() as http:
-        response = await http.post(served.url + "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
-                                   headers={"Accept": "application/json, text/event-stream"})
-        assert response.status_code == 401
-        assert "resource_metadata=" in response.headers.get("www-authenticate", "")
-
 
 async def test_healthz(served: Served):
     async with httpx.AsyncClient() as http:

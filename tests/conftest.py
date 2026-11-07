@@ -13,7 +13,6 @@ import psycopg
 import pytest
 import uvicorn
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
-from pydantic import AnyHttpUrl
 
 from datamcp.config import DatabaseConfig, Settings
 from datamcp.contract import DEFINITIONS_SQL
@@ -148,7 +147,6 @@ async def served(settings: Settings):
     """The server with a static bearer verifier (no OAuth): tokens of STATIC_TOKENS."""
     port = free_port()
     verifier = StaticTokenVerifier(tokens=STATIC_TOKENS)
-    verifier.base_url = AnyHttpUrl(f"http://127.0.0.1:{port}")  # so the 401 challenge names the resource metadata
     mcp, services = build_server(settings, auth=verifier)
     async for url in serve(mcp, settings, port=port):
         yield Served(url, settings, services)

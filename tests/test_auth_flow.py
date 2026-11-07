@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import time
 from urllib.parse import parse_qs, urlencode, urlparse
@@ -162,6 +163,21 @@ async def oauth_round_trip(http: httpx.AsyncClient, base: str, redirect: str = C
     return await http.post(metadata["token_endpoint"], data={
         "grant_type": "authorization_code", "code": query["code"][0], "redirect_uri": redirect,
         "client_id": client_id, "code_verifier": verifier}), metadata, client_id
+
+
+async def test_unauthenticated_gets_401_pointing_at_metadata_that_answers(oauth_server):
+    """Claude and ChatGPT find the authorization server from this challenge (RFC 9728). FastMCP 4.1
+    names the metadata only when the provider serves it: the real provider must still do."""
+    base, _ = oauth_server
+    async with httpx.AsyncClient() as http:
+        response = await http.post(base + "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                   headers={"Accept": "application/json, text/event-stream"})
+        assert response.status_code == 401
+        pointer = re.search(r'resource_metadata="([^"]+)"', response.headers.get("www-authenticate", ""))
+        assert pointer, response.headers
+        metadata = await http.get(pointer[1])
+        assert metadata.status_code == 200
+        assert metadata.json()["authorization_servers"]
 
 
 async def test_allowed_account_gets_tokens_and_tools(oauth_server, fake_google):
