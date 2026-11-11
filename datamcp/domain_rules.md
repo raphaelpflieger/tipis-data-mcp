@@ -60,9 +60,9 @@
   Dates (`date`, `day`, `snapshot_on`, `computed_on`) are calendar days.
 - **Brands.** `canonical_domain` (events and their counts): `lacartedescolocs.fr` (France,
   historic), `lacartedescolocs.com`, and the `tipis.*` domains (international, launched 2026, a
-  handful of events so far). Before 2023-08-09 the domain was not recorded: `events` hold null there
-  and `daily_event_counts` counts them under `lacartedescolocs.fr`, the only domain then; read a
-  null as `lacartedescolocs.fr`. Never filter on the domain for totals. The malformed `["lacartedescolocs.fr", "€"]`
+  handful of events so far). Before 2023-08-09 the domain was not recorded: those events were set to
+  `lacartedescolocs.fr`, the only domain then (2026-11-11), so the column is never null. Never filter
+  on the domain for totals. The malformed `["lacartedescolocs.fr", "€"]`
   (1,082 events, 2024-03 to 2026-06, no longer written) means `lacartedescolocs.fr`. `published_brand` (listings) holds brand keys (`lacartedescolocs`).
 - **Geography.** `viewports` are the areas of the site (country, region = `administrative`,
   county, city, district) keyed by `canonical_path` (e.g. `/fr/auvergne-rhone-alpes/lyon`).
